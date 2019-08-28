@@ -1,0 +1,59 @@
+apply plugin: 'org.hidetake.ssh'
+apply plugin: "org.flywaydb.flyway"
+
+buildscript {
+    repositories {
+        mavenLocal()
+        mavenCentral()
+        maven {
+          url "https://plugins.gradle.org/m2/"
+        }
+        flatDir {
+            dirs 'lib'
+        }
+    }
+    dependencies {
+        classpath "gradle.plugin.com.boxfuse.client:gradle-plugin-publishing:5.0.7"
+        classpath 'org.hidetake:gradle-ssh-plugin:2.6+'
+        classpath 'com.oracle.jdbc:ojdbc8:12.2.0.1'
+    }
+}
+
+task migrateDB(type: org.flywaydb.gradle.task.FlywayMigrateTask) {
+    File propsFile = new File(projectDir,"database."+profile+".properties")
+    Properties ps = new Properties()
+    ps.load(new FileInputStream(propsFile))
+    driver = ps['db.driver']
+    url = ps['ap.url']
+    user = ps['ap.username']
+    password = ps['ap.password']
+    locations = [ps['ap.location']]
+    encoding = ps['db.fileencoding']
+    schemas = [ps['db.schemas']]
+}
+
+task baselineDB(type: org.flywaydb.gradle.task.FlywayBaselineTask) {
+    File propsFile = new File(projectDir,"database."+profile+".properties")
+    Properties ps = new Properties()
+    ps.load(new FileInputStream(propsFile))
+    driver = ps['db.driver']
+    url = ps['ap.url']
+    user = ps['ap.username']
+    password = ps['ap.password']
+    locations = [ps['ap.location']]
+    encoding = ps['db.fileencoding']
+    schemas = [ps['db.schemas']]
+}
+
+task infoDB(type: org.flywaydb.gradle.task.FlywayInfoTask) {
+    File propsFile = new File(projectDir,"database."+profile+".properties")
+    Properties ps = new Properties()
+    ps.load(new FileInputStream(propsFile))
+    driver = ps['db.driver']
+    url = ps['ap.url']
+    user = ps['ap.username']
+    password = ps['ap.password']
+    locations = [ps['ap.location']]
+    encoding = ps['db.fileencoding']
+    schemas = [ps['db.schemas']]
+}

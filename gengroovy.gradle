@@ -1,0 +1,152 @@
+import groovy.transform.TupleConstructor
+
+def code = "UTF-8"
+def starttag = ""
+def endtag = ""
+
+List.metaClass.collectWithIndex = { e ->
+    def collected = []
+    delegate.eachWithIndex { itm, idx ->
+        collected << e(itm, idx)
+    }
+    return collected
+}
+
+@TupleConstructor(includeFields = true)
+class sqlFile {
+    File file
+    String code
+    String fileOrder
+    String delimiter
+
+    int getPriority() {
+        def ex = fileOrder.split(',')
+        def priority = (ex.collect { it + '.SQL' } + ex.reverse().collect {
+            it + '.ROLLBACK.SQL'
+        }).collectWithIndex { it, i -> file.name.toUpperCase().endsWith(it) ? i : -1 }.findAll { it > -1 }[0]
+        return priority
+    }
+
+    String getType() {
+        if (file.name.toUpperCase().endsWith('STOREDPROCEDURE.SQL')) {
+            "PROCEDURE"
+        } else if (file.name.toUpperCase().endsWith("FUNCTION.SQL")) {
+            "FUNCTION"
+        } else if (file.name.toUpperCase().endsWith("TABLE.SQL")) {
+            "TABLE"
+        } else if (file.name.toUpperCase().endsWith("VIEW.SQL")) {
+            "VIEW"
+        } else if (file.name.toUpperCase().endsWith("SCHEMAPATCH.SQL")) {
+            "SCHEMAPATCH"
+        } else if (file.name.toUpperCase().endsWith("DATAPATCH.SQL")) {
+            "DATAPATCH"
+        } else if (file.name.toUpperCase().endsWith("ROLLBACK.SQL")) {
+            "ROLLBACK"
+        } else {
+            throw new Exception("未知的類型")
+        }
+    }
+
+    String getStr() {
+        file.getText(code)
+    }
+}
+
+task creWorkspace {
+    description 'Clean buildDir then rebuild'
+    delete "${buildDir}"
+    def subdir = new File("${buildDir}")
+    subdir.mkdirs()
+}
+
+task getGitlabTag (dependsOn: creWorkspace) {
+    description 'Get the last two tags of gitlab'
+    new ByteArrayOutputStream().withStream { os ->
+        def result = exec {
+            executable = "git"
+            args = ["tag", "--sort=committerdate"]
+            standardOutput = os
+        }
+        def gitlabTagList = os.toString().split('\r?\n').findAll { "[0-9]{1,8}.[0-9]{1,6}" }
+        starttag = gitlabTagList[-2]
+        endtag = gitlabTagList[-1]
+    }
+}
+
+task getGitlabInfo (dependsOn: getGitlabTag) {
+    description 'Get information between the last two tags of gitlab'
+    def fileText = ""
+    new ByteArrayOutputStream().withStream { os ->
+        def result = exec {
+            executable = "git"
+            args = ["log", "--name-only", "${starttag}..${endtag}"]
+            standardOutput = os
+        }
+        def gitlabInfo = os.toString().split('\r?\n')
+        gitlabInfo.findAll { it.contains(".sql") }.each{
+            if (new File("${it}").exists()) {
+                fileText = "${fileText}${it}\r\n"
+            } else {
+                println "${it} <<<< Not Exists, please check it is correct!"
+            }
+        }
+    }
+    new File("${buildDir}/updatesql.list").withWriter(code) { wr ->
+        wr.write(fileText)
+    }
+}
+
+task generate (dependsOn: getGitlabInfo) {
+    description 'Follow gitlab to generate the flyway Migration file.'
+
+    //read gitlab log to get update files information
+    def fileSeparator = ""
+    if ("${System.getProperty('os.name')}".split(" ")[0] == "Windows") {
+        fileSeparator = "\\\\"
+    } else {
+        fileSeparator = "/"
+    }
+    def filesSet = new HashSet<String>()
+    def changeDb = new TreeSet<String>()
+    def changeSetFolder = new TreeSet<String>()
+    def String gitlabLogContents = new File("${buildDir}/updatesql.list").getText(code)
+    gitlabLogContents.readLines().findAll{
+        it.startsWith('RELEASE')
+    }.findAll{
+        it.endsWith(".sql")
+    }.each {
+        filesSet << it
+        changeDb << it.split("/")[1]
+        changeSetFolder << it.split("/")[3]
+    }
+    changeDb.each { db ->
+        String changes = "", filePath = ""
+        def ConcatenateText = "", sql = "", lastFolder = ""
+        if ("${db}" == "AP") {
+            changes = "CONNECT TO WMS;\r\n\r\n"
+        } else if ("${db}" == "BATCH") {
+            changes = "CONNECT TO WMSBATCH;\r\n\r\n"
+        }
+        changeSetFolder.each { folder ->
+            if (folder ==~ "[0-9]{8}") {
+                lastFolder = folder
+            }
+            filesSet.findAll {
+                it.contains("RELEASE/${db}")
+            }.findAll {
+                it.contains ("${folder}")
+            }.collect { new sqlFile(new File(it), code, "${fileOrder}") }.sort {
+                it.priority
+            }.each { fileF ->
+                filePath = fileF.file
+                filePath = filePath.replaceAll("${fileSeparator}", "/" )
+                sql = new File(filePath).getText(code)
+                ConcatenateText = "${ConcatenateText}${sql}\r\n"
+            }
+        }
+        changes = "${changes}${ConcatenateText}"
+        new File("MIGRATION/${db}/V${endtag}__${lastFolder}ChangesPatch.sql").withWriter(code) { wr ->
+            wr.write(changes)
+        }
+    }
+}
