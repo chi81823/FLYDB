@@ -15,7 +15,7 @@ buildscript {
     dependencies {
         classpath "gradle.plugin.com.boxfuse.client:gradle-plugin-publishing:5.0.7"
         classpath 'org.hidetake:gradle-ssh-plugin:2.6+'
-        classpath 'com.oracle.jdbc:ojdbc8:12.2.0.1'
+        classpath 'org.postgresql:postgresql:42.2.6'
     }
 }
 
